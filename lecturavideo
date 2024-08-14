@@ -1,0 +1,187 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.integrate import cumtrapz
+import cv2
+import cv2.aruco as aruco
+import csv
+
+
+file_path = 'Prueba2y5V_0000.txt'
+
+try:
+   
+    data_galgas = pd.read_csv(file_path, encoding="ISO-8859-1", delimiter=';', header=0, skiprows=[], skipfooter=0)
+
+   
+    print(data_galgas.head())
+    print(data_galgas.columns)  # Imprime las columnas leídas
+
+   
+    data_galgas = data_galgas.loc[:, ~data_galgas.columns.str.contains('^Unnamed')]
+
+  
+    data_galgas.columns = ['Time_s', 'Incidente_um_m', 'Transmitida_um_m', 'DI_6']
+
+    
+    data_galgas['Incidente_integral'] = cumtrapz(data_galgas['Incidente_um_m'], data_galgas['Time_s'], initial=0)
+    data_galgas['Transmitida_integral'] = cumtrapz(data_galgas['Transmitida_um_m'], data_galgas['Time_s'], initial=0)
+
+except FileNotFoundError:
+    print(f"El archivo {file_path} no se encontró.")
+except pd.errors.ParserError as e:
+    print(f"Error al analizar el archivo CSV: {e}")
+except ValueError as ve:
+    print(f"Error de longitud de columnas: {ve}")
+
+
+video_path = '/content/Prueba_2y5Vrecortado.mp4'
+
+
+cap = cv2.VideoCapture(video_path)
+
+
+ret, reference_frame = cap.read()
+if not ret:
+    print("No se pudo leer el video.")
+    cap.release()
+    exit()
+
+def detect_aruco_positions(frame):
+   
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+  
+    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+    aruco_params = aruco.DetectorParameters()
+    corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
+
+
+    aruco_positions = {}
+    if ids is not None:
+        for i in range(len(ids)):
+            if ids[i][0] == 4:  # Excluir el marcador con ID 4
+                continue
+            aruco_positions[ids[i][0]] = corners[i][0]
+
+    return aruco_positions
+
+
+reference_positions = detect_aruco_positions(reference_frame)
+
+
+movements = []
+
+frame_idx = 0
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    current_positions = detect_aruco_positions(frame)
+    frame_data = {'frame': frame_idx}
+
+    for aruco_id, ref_pos in reference_positions.items():
+        if aruco_id in current_positions:
+            cur_pos = current_positions[aruco_id]
+            diff = np.linalg.norm(cur_pos - ref_pos)
+            frame_data[aruco_id] = diff
+        else:
+            frame_data[aruco_id] = None
+
+    movements.append(frame_data)
+    frame_idx += 1
+
+cap.release()
+
+
+output_path = 'movimientos.txt'
+
+
+with open(output_path, 'w', newline='') as csvfile:
+    fieldnames = ['frame'] + list(reference_positions.keys())
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+    writer.writeheader()
+    for data in movements:
+        writer.writerow(data)
+
+
+data_video = pd.read_csv(output_path)
+
+
+plt.figure(figsize=(12, 16))
+
+
+plt.subplot(3, 1, 1)
+plt.plot(data_galgas['Time_s'], data_galgas['Incidente_um_m'], label='Incidente')
+plt.plot(data_galgas['Time_s'], data_galgas['Transmitida_um_m'], label='Transmitida')
+plt.xlim(0.0110, 0.015)  # Zoom en la región específica
+plt.xlabel('Tiempo (s)')
+plt.ylabel('Medición (um/m)')
+plt.title('Gráfico de Incidente y Transmitida en función del Tiempo (Zoom)')
+plt.legend()
+plt.grid(True)
+
+
+plt.subplot(3, 1, 2)
+plt.plot(data_galgas['Time_s'], data_galgas['Incidente_integral'], label='Incidente Integral')
+plt.plot(data_galgas['Time_s'], data_galgas['Transmitida_integral'], label='Transmitida Integral')
+plt.xlim(0.0110, 0.015)  # Zoom en la región específica
+plt.xlabel('Tiempo (s)')
+plt.ylabel('Deformación acumulada')
+plt.title('Gráfico de la Deformación en función del Tiempo (Zoom)')
+plt.legend()
+plt.grid(True)
+
+
+plt.subplot(3, 1, 3)
+for aruco_id in reference_positions.keys():
+    if aruco_id != 4:  # Excluir el marcador con ID 4
+        plt.plot(data_video['frame'], data_video[str(aruco_id)], label=f'Aruco {aruco_id}')
+
+plt.xlabel('Fotograma')
+plt.ylabel('Diferencia de píxeles')
+plt.legend()
+plt.title('Movimiento de los arucos a lo largo del video')
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
+
+
+deformation = data_video.drop(columns=['frame']).fillna(0).cumsum()
+
+
+plt.figure(figsize=(12, 8))
+for aruco_id in reference_positions.keys():
+    if aruco_id != 4:  # Excluir el marcador con ID 4
+        plt.plot(data_video['frame'], deformation[str(aruco_id)], label=f'Deformación Aruco {aruco_id}')
+
+plt.xlabel('Fotograma')
+plt.ylabel('Deformación (integral acumulativa de diferencia de píxeles)')
+plt.legend()
+plt.title('Deformación a lo largo del video')
+plt.grid(True)
+plt.show()
+
+time_to_frame = lambda t: int(t * frame_idx / data_galgas['Time_s'].max())
+
+
+plt.figure(figsize=(12, 8))
+
+
+plt.plot([time_to_frame(t) for t in data_galgas['Time_s']], data_galgas['Incidente_integral'], label='Deformación Galgas Incidente')
+plt.plot([time_to_frame(t) for t in data_galgas['Time_s']], data_galgas['Transmitida_integral'], label='Deformación Galgas Transmitida')
+
+
+for aruco_id in reference_positions.keys():
+    if aruco_id != 4:  
+        plt.plot(data_video['frame'], deformation[str(aruco_id)], label=f'Deformación Aruco {aruco_id}')
+
+plt.xlabel('Fotograma (aproximado)')
+plt.ylabel('Deformación / Diferencia de píxeles')
+plt.legend()
+plt.title('Comparación de Deformaciones: Galgas y Arucos')
+plt.grid(True)
+plt.show()
