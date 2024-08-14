@@ -1,0 +1,21 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
+
+marker_ids = [23, 42, 99]  
+
+marker_size = 700  
+
+for marker_id in marker_ids:
+    marker_image = cv2.aruco.generateImageMarker(aruco_dict, marker_id, marker_size)
+    filename = f"aruco_marker_{marker_id}.png"
+    cv2.imwrite(filename, marker_image)
+    print(f"Marcador ArUco {marker_id} guardado como {filename}")
+    
+    plt.figure()
+    plt.imshow(marker_image, cmap='gray')
+    plt.title(f"Marker ID: {marker_id}")
+    plt.axis('off')
+    plt.show()
