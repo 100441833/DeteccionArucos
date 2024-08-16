@@ -1,0 +1,46 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.integrate import cumtrapz
+
+file_path = 'Prueba2y5V_0000.txt'
+try:
+
+    data = pd.read_csv(file_path, encoding="ISO-8859-1", delimiter=';', header=0, skiprows=[], skipfooter=0)
+    print(data.head())
+    print(data.columns)  
+    data = data.loc[:, ~data.columns.str.contains('^Unnamed')]
+    data.columns = ['Time_s', 'Incidente_um_m', 'Transmitida_um_m', 'DI_6']
+    print(data.head())
+    data['Incidente_integral'] = cumtrapz(data['Incidente_um_m'], data['Time_s'], initial=0)
+    data['Transmitida_integral'] = cumtrapz(data['Transmitida_um_m'], data['Time_s'], initial=0)
+    plt.figure(figsize=(12, 8))
+
+    plt.subplot(2, 1, 1)
+    plt.plot(data['Time_s'], data['Incidente_um_m'], label='Incidente')
+    plt.plot(data['Time_s'], data['Transmitida_um_m'], label='Transmitida')
+    plt.xlim(0.0110, 0.015)  
+    plt.xlabel('Tiempo (s)')
+    plt.ylabel('Medición (um/m)')
+    plt.title('Gráfico de Incidente y Transmitida en función del Tiempo (Zoom)')
+    plt.legend()
+    plt.grid(True)
+
+    plt.subplot(2, 1, 2)
+    plt.plot(data['Time_s'], data['Incidente_integral'], label='Incidente Integral')
+    plt.plot(data['Time_s'], data['Transmitida_integral'], label='Transmitida Integral')
+    plt.xlim(0.0110, 0.015) 
+    plt.xlabel('Tiempo (s)')
+    plt.ylabel('Deformación acumulada')
+    plt.title('Gráfico de la Deformación en función del Tiempo (Zoom)')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+except FileNotFoundError:
+    print(f"El archivo {file_path} no se encontró.")
+except pd.errors.ParserError as e:
+    print(f"Error al analizar el archivo CSV: {e}")
+except ValueError as ve:
+    print(f"Error de longitud de columnas: {ve}")
