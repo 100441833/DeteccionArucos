@@ -3,16 +3,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import csv
 import pandas as pd
-
 !pip install opencv-contrib-python
-
 import cv2.aruco as aruco
+
 
 video_path = '/content/Prueba_2y5Vrecortado.mp4'
 cap = cv2.VideoCapture(video_path)
+if not cap.isOpened():
+    print("No se pudo abrir el video.")
+    cap.release()
+    exit()
+
 ret, reference_frame = cap.read()
 if not ret:
-    print("No se pudo leer el video.")
+    print("No se pudo leer el primer fotograma.")
     cap.release()
     exit()
 
@@ -31,7 +35,9 @@ def detect_aruco_positions(frame):
 
     return aruco_positions
 
+
 reference_positions = detect_aruco_positions(reference_frame)
+
 
 movements = []
 frame_idx = 0
@@ -46,8 +52,9 @@ while True:
     for aruco_id, ref_pos in reference_positions.items():
         if aruco_id in current_positions:
             cur_pos = current_positions[aruco_id]
-            diff = np.linalg.norm(cur_pos - ref_pos)
-            frame_data[aruco_id] = diff
+            diff_px = np.linalg.norm(cur_pos - ref_pos)
+            diff_mm = diff_px / scale_px_per_mm
+            frame_data[aruco_id] = diff_mm
         else:
             frame_data[aruco_id] = None
 
@@ -56,39 +63,24 @@ while True:
 
 cap.release()
 
-output_path = 'movimientos.txt'
-
-with open(output_path, 'w', newline='') as csvfile:
-    fieldnames = ['frame'] + list(reference_positions.keys())
-    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-    writer.writeheader()
-    for data in movements:
-        writer.writerow(data)
 
 
-data = pd.read_csv(output_path)
+
+data = pd.DataFrame(movements)
+fps = 75000  
+scale_px_per_mm = 19.6 
+
+
+data['Time_s'] = data['frame'] / fps
 
 plt.figure(figsize=(10, 6))
 for aruco_id in reference_positions.keys():
     if aruco_id != 4:  # Excluir el marcador con ID 4
-        plt.plot(data['frame'], data[str(aruco_id)], label=f'Aruco {aruco_id}')
+        plt.plot(data['Time_s'], data[aruco_id], label=f'Aruco {aruco_id}')
 
-plt.xlabel('Fotograma')
-plt.ylabel('Diferencia de píxeles')
+plt.xlabel('Tiempo (s)')
+plt.ylabel('Desplazamiento (mm)')
 plt.legend()
-plt.title('Movimiento de los arucos a lo largo del video')
-plt.show()
-
-
-deformation = data.drop(columns=['frame']).fillna(0).cumsum()
-plt.figure(figsize=(10, 6))
-for aruco_id in reference_positions.keys():
-    if aruco_id != 4:  # Excluir el marcador con ID 4
-        plt.plot(data['frame'], deformation[str(aruco_id)], label=f'Deformación Aruco {aruco_id}')
-
-plt.xlabel('Fotograma')
-plt.ylabel('Deformación (integral acumulativa de diferencia de píxeles)')
-plt.legend()
-plt.title('Deformación a lo largo del video')
+plt.title('Desplazamiento de los Arucos a lo largo del tiempo')
+plt.grid(True)
 plt.show()
