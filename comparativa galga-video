@@ -1,0 +1,161 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from scipy.integrate import cumtrapz
+
+# --- Procesamiento del Video ---
+# Parámetros de video
+fps = 75000  # cuadros por segundo
+scale_px_per_mm = 19.6  # escala en pixeles por mm
+video_path = 'Prueba_2y5Vrecortado.mp4'
+
+# Capturar el video
+cap = cv2.VideoCapture(video_path)
+if not cap.isOpened():
+    print("No se pudo abrir el video.")
+    cap.release()
+    exit()
+
+# Leer el primer fotograma como referencia
+ret, reference_frame = cap.read()
+if not ret:
+    print("No se pudo leer el primer fotograma.")
+    cap.release()
+    exit()
+
+def detect_aruco_positions(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
+    aruco_params = cv2.aruco.DetectorParameters()
+    corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
+    aruco_positions = {}
+    if ids is not None:
+        for i in range(len(ids)):
+            if ids[i][0] == 4:  # Excluir el marcador con ID 4
+                continue
+            aruco_positions[ids[i][0]] = corners[i][0]
+    return aruco_positions
+
+# Obtener las posiciones iniciales de los arucos
+reference_positions = detect_aruco_positions(reference_frame)
+
+# Inicializar lista para guardar los datos de movimiento
+movements = []
+
+frame_idx = 0
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    current_positions = detect_aruco_positions(frame)
+    frame_data = {'frame': frame_idx}
+
+    for aruco_id, ref_pos in reference_positions.items():
+        if aruco_id in current_positions:
+            cur_pos = current_positions[aruco_id]
+            diff_px = np.linalg.norm(cur_pos - ref_pos)
+            diff_mm = diff_px / scale_px_per_mm
+            frame_data[aruco_id] = diff_mm
+        else:
+            frame_data[aruco_id] = None
+
+    movements.append(frame_data)
+    frame_idx += 1
+
+cap.release()
+
+# Convertir los datos del video a un DataFrame
+data_video = pd.DataFrame(movements)
+data_video['Time_s'] = data_video['frame'] / fps
+
+# Selección de los últimos 0.003 segundos del video
+start_time_video = data_video['Time_s'].max() - 0.003
+data_video_sync = data_video[data_video['Time_s'] >= start_time_video]
+
+# --- Procesamiento de los Datos de las Galgas ---
+file_path = 'Prueba2y5V_0000.txt'
+
+try:
+    # Leer los datos del archivo
+    data_galgas = pd.read_csv(file_path, encoding="ISO-8859-1", delimiter=';', header=0)
+    data_galgas = data_galgas.loc[:, ~data_galgas.columns.str.contains('^Unnamed')]
+    data_galgas.columns = ['Time_s', 'Incidente_um_m', 'Transmitida_um_m', 'DI_6']
+
+    # Calcular el desplazamiento basado en la deformación
+    data_galgas['Incidente_desplazamiento_mm'] = cumtrapz(data_galgas['Incidente_um_m'], data_galgas['Time_s'], initial=0) / 1000
+    data_galgas['Transmitida_desplazamiento_mm'] = cumtrapz(data_galgas['Transmitida_um_m'], data_galgas['Time_s'], initial=0) / 1000
+
+    # Selección del intervalo de 0.003 segundos desde el segundo 0.0120 en los datos de las galgas
+    data_galgas_sync = data_galgas[(data_galgas['Time_s'] >= 0.0120) & (data_galgas['Time_s'] <= 0.0150)].copy()
+
+    # --- Sincronización y Ajuste de Desplazamientos ---
+    # Escalar los valores de desplazamiento de las galgas para que sean comparables con los del video
+    # Aquí vamos a ajustar ambos ejes (tiempo y desplazamiento)
+    
+    # Ajustar los datos de desplazamiento para que empiecen desde cero
+    min_desplazamiento_galgas = data_galgas_sync['Incidente_desplazamiento_mm'].min()
+    data_galgas_sync['Incidente_desplazamiento_mm'] -= min_desplazamiento_galgas
+    data_galgas_sync['Transmitida_desplazamiento_mm'] -= min_desplazamiento_galgas
+
+    # Ajustar el tiempo para que coincida con la duración del video (0.003 s)
+    time_video_duration = 0.003
+    time_galgas_duration = data_galgas_sync['Time_s'].max() - data_galgas_sync['Time_s'].min()
+    time_scaling_factor = time_video_duration / time_galgas_duration
+    data_galgas_sync['Time_s_scaled'] = (data_galgas_sync['Time_s'] - data_galgas_sync['Time_s'].min()) * time_scaling_factor
+
+    # Escalar el desplazamiento para que sea comparable con el del video
+    displacement_video_range = data_video_sync.iloc[:, 1:].max().max() - data_video_sync.iloc[:, 1:].min().min()
+    displacement_galgas_range = data_galgas_sync['Incidente_desplazamiento_mm'].max() - data_galgas_sync['Incidente_desplazamiento_mm'].min()
+    displacement_scaling_factor = displacement_video_range / displacement_galgas_range
+    data_galgas_sync['Incidente_desplazamiento_mm_scaled'] = data_galgas_sync['Incidente_desplazamiento_mm'] * displacement_scaling_factor
+    data_galgas_sync['Transmitida_desplazamiento_mm_scaled'] = data_galgas_sync['Transmitida_desplazamiento_mm'] * displacement_scaling_factor
+
+    # --- Gráfico 1: Desplazamiento de las Galgas (Original) ---
+    plt.figure(figsize=(14, 10))
+    
+    plt.subplot(3, 1, 1)
+    plt.plot(data_galgas['Time_s'], data_galgas['Incidente_desplazamiento_mm'], label='Incidente Desplazamiento (Original)')
+    plt.plot(data_galgas['Time_s'], data_galgas['Transmitida_desplazamiento_mm'], label='Transmitida Desplazamiento (Original)')
+    plt.xlabel('Tiempo (s)')
+    plt.ylabel('Desplazamiento (mm)')
+    plt.legend()
+    plt.title('Desplazamiento de las Galgas (Original)')
+    plt.grid(True)
+
+    # --- Gráfico 2: Desplazamiento del Video (Original) ---
+    plt.subplot(3, 1, 2)
+    for aruco_id in reference_positions.keys():
+        if aruco_id != 4:
+            plt.plot(data_video['Time_s'], data_video[aruco_id], label=f'Aruco {aruco_id} (Original)')
+
+    plt.xlabel('Tiempo (s)')
+    plt.ylabel('Desplazamiento (mm)')
+    plt.legend()
+    plt.title('Desplazamiento del Video (Original)')
+    plt.grid(True)
+
+    # --- Gráfico 3: Comparación de los desplazamientos (Escalado y Sincronizado) ---
+    plt.subplot(3, 1, 3)
+    plt.plot(data_galgas_sync['Time_s_scaled'], data_galgas_sync['Incidente_desplazamiento_mm_scaled'], label='Incidente Desplazamiento (Galgas Escalado)')
+    plt.plot(data_galgas_sync['Time_s_scaled'], data_galgas_sync['Transmitida_desplazamiento_mm_scaled'], label='Transmitida Desplazamiento (Galgas Escalado)')
+    for aruco_id in reference_positions.keys():
+        if aruco_id != 4:
+            plt.plot(data_video_sync['Time_s'], data_video_sync[aruco_id], label=f'Aruco {aruco_id} (Video)', linestyle='--')
+
+    plt.xlabel('Tiempo (s)')
+    plt.ylabel('Desplazamiento (mm)')
+    plt.legend()
+    plt.title('Comparación de Desplazamientos (Galgas vs Video, Escalado y Sincronizado)')
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+except FileNotFoundError:
+    print(f"El archivo {file_path} no se encontró.")
+except pd.errors.ParserError as e:
+    print(f"Error al analizar el archivo CSV: {e}")
+except ValueError as ve:
+    print(f"Error de longitud de columnas: {ve}")
