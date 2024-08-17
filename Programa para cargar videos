@@ -1,0 +1,201 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import cumtrapz
+
+
+if hasattr(cv2.aruco, 'getPredefinedDictionary'):
+    print("El módulo ArUco está disponible en OpenCV")
+else:
+    print("El módulo ArUco NO está disponible en OpenCV")
+
+
+
+ARUCO_SIZE_PIXELS = 50                                                             # Cambia este valor según el tamaño real del ArUco en la imagen
+
+
+aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
+parameters = cv2.aruco.DetectorParameters()
+
+
+
+video_path = '/content/experimentoTFG11.mp4'                                      # Cambia esta ruta para seleccionar el video que deseas analizar
+
+
+cap = cv2.VideoCapture(video_path)
+
+if not cap.isOpened():
+    print("Error al abrir el video")
+    exit()
+
+
+marker_positions = []
+frames_with_markers = []
+initial_corners = {}  
+
+frame_count = 0
+frames_without_markers = 0
+
+
+initialization_complete = False
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+
+    frame_count += 1
+
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+
+    corners, ids, rejected = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+
+
+    if ids is not None and len(ids) > 0:
+        for i in range(len(ids)):
+            marker_id = ids[i][0]
+            if marker_id not in initial_corners:
+                initial_corners[marker_id] = corners[i][0]  # Guardar las esquinas iniciales
+
+
+            center = np.mean(corners[i][0], axis=0)
+            relative_position = center
+
+            marker_positions.append((frame_count, marker_id, relative_position[0], relative_position[1], corners[i][0]))
+
+        initialization_complete = True
+    else:
+        frames_without_markers += 1
+
+
+    frame_with_markers = cv2.aruco.drawDetectedMarkers(frame.copy(), corners, ids)
+    frames_with_markers.append(frame_with_markers)
+
+cap.release()
+
+
+marker_positions = np.array(marker_positions, dtype=object)
+
+
+class KalmanFilter:
+    def __init__(self, process_variance, measurement_variance):
+        self.process_variance = process_variance
+        self.measurement_variance = measurement_variance
+        self.posteri_estimate = 0.0
+        self.posteri_error_estimate = 1.0
+
+    def update(self, measurement):
+     
+        priori_estimate = self.posteri_estimate
+        priori_error_estimate = self.posteri_error_estimate + self.process_variance
+
+
+        blending_factor = priori_error_estimate / (priori_error_estimate + self.measurement_variance)
+        self.posteri_estimate = priori_estimate + blending_factor * (measurement - priori_estimate)
+        self.posteri_error_estimate = (1 - blending_factor) * priori_error_estimate
+
+        return self.posteri_estimate
+
+
+kf_x = KalmanFilter(process_variance=1e-5, measurement_variance=1e-2)
+kf_y = KalmanFilter(process_variance=1e-5, measurement_variance=1e-2)
+
+
+def calcular_distancia(pos1, pos2):
+    return np.linalg.norm(pos1 - pos2)
+
+
+if marker_positions.size > 0:
+    
+    print("Primeras posiciones relativas detectadas:")
+    print(marker_positions[:10])
+
+
+    plt.figure(figsize=(12, 8))
+    for marker_id in np.unique(marker_positions[:, 1]):
+        marker_data = marker_positions[marker_positions[:, 1] == marker_id]
+
+
+        smooth_x = np.array([kf_x.update(pos[2]) for pos in marker_data])
+        smooth_y = np.array([kf_y.update(pos[3]) for pos in marker_data])
+
+        plt.plot([pos[0] for pos in marker_data], smooth_x, label=f'Marker {int(marker_id)} X')
+        plt.plot([pos[0] for pos in marker_data], smooth_y, label=f'Marker {int(marker_id)} Y')
+
+
+    plt.xlim(0, frame_count)
+    plt.ylim(-400, 400)
+
+    plt.xlabel('Frame')
+    plt.ylabel('Posición relativa (píxeles)')
+    plt.title('Movimiento relativo de los marcadores ArUco respecto al primer frame')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+    PIXEL_TO_MM_CONVERSION = 15.0 / ARUCO_SIZE_PIXELS                                               # Ajustar según el tamaño real en píxeles del ArUco en la imagen
+
+
+    deformation_over_time = []
+
+
+    for frame_number in range(1, frame_count + 1):
+        marker_data = marker_positions[marker_positions[:, 0] == frame_number]
+
+        if len(marker_data) > 0:
+            for data in marker_data:
+                marker_id = data[1]
+                corners = data[4]  # Esquinas del marcador en este frame
+
+                if marker_id in initial_corners:
+                    initial_corners_pos = np.array(initial_corners[marker_id])
+                    current_corners_pos = np.array(corners)
+
+                    if len(current_corners_pos) == 4 and len(initial_corners_pos) == 4:
+                       
+                        initial_distance = calcular_distancia(initial_corners_pos[0], initial_corners_pos[2])
+                        current_distance = calcular_distancia(current_corners_pos[0], current_corners_pos[2])
+
+                     
+                        deformation = (current_distance - initial_distance) / initial_distance
+                        deformation_over_time.append((frame_number, deformation * PIXEL_TO_MM_CONVERSION))
+                    else:
+                        print(f"Error: Número inesperado de esquinas en frame {frame_number} para marker_id {marker_id}. Esquinas detectadas: {len(corners)}")
+                else:
+                    print(f"Error: marker_id {marker_id} no encontrado en initial_corners.")
+        else:
+            print(f"No se detectaron marcadores en el frame {frame_number}.")
+
+
+    if len(deformation_over_time) > 0:
+        deformation_over_time = np.array(deformation_over_time)
+
+
+        integral_deformation = cumtrapz(deformation_over_time[:, 1], deformation_over_time[:, 0], initial=0)
+
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(deformation_over_time[:, 0], integral_deformation, label='Deformación Integral (mm)')
+        plt.xlabel('Frame')
+        plt.ylabel('Deformación Integral (mm)')
+        plt.title('Deformación Integral de los marcadores ArUco a lo largo del tiempo')
+        plt.grid(True)
+        plt.legend()
+        plt.show()
+    else:
+        print("No se detectaron suficientes marcadores para calcular la deformación.")
+else:
+    print("No se detectaron marcadores en el video.")
+
+
+print(f"Número total de frames procesados: {frame_count}")
+print(f"Número de frames sin marcadores detectados: {frames_without_markers}")
+
+
+for i in range(min(10, len(frames_with_markers))):
+    plt.imshow(cv2.cvtColor(frames_with_markers[i], cv2.COLOR_BGR2RGB))
+    plt.show()
