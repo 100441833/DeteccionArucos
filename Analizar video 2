@@ -64,6 +64,15 @@ while True:
 cap.release()
 
 
+output_path = 'movimientos.txt'
+
+with open(output_path, 'w', newline='') as csvfile:
+    fieldnames = ['frame'] + list(reference_positions.keys())
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+    writer.writeheader()
+    for data in movements:
+        writer.writerow(data)
 
 
 data = pd.DataFrame(movements)
