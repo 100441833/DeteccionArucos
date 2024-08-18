@@ -1,65 +1,135 @@
 import tkinter as tk
-from tkinter import filedialog
-from PIL import Image, ImageTk  # Asegúrate de tener instalada la biblioteca Pillow (PIL)
+from tkinter import filedialog, messagebox, simpledialog
+from tkinter import Toplevel
+from PIL import Image, ImageTk
+import cv2
+import os
 
-class VideoToImageConverterApp:
-    def _init_(self, root):
+class VideoAnalyzerApp:
+    def __init__(self, root):
         self.root = root
-        self.root.title("Progama de Ricardo")
+        self.root.title("Tracker de ArUcos")
+        self.root.geometry("500x400")
 
-        # Variables
-        self.video_file = None
-        self.result_image = None
+        self.video_path = None
+        self.result_image_path = None
+        self.aruco_size_mm = None
+        self.mm_to_pixels_scale = None
 
-        # Main Frame
-        self.main_frame = tk.Frame(self.root, padx=20, pady=20)
-        self.main_frame.pack()
+        self.set_theme()
+        self.create_widgets()
 
-        # Drag and Drop Label
-        self.drag_drop_label = tk.Label(self.main_frame, text="Arrastra aquí el archivo de video (.mp4)")
-        self.drag_drop_label.pack(pady=20)
+    def set_theme(self):
+        self.bg_color = "#5a1e2d"  # Rojo vino oscuro
+        self.fg_color = "white"
+        self.root.configure(bg=self.bg_color)
 
-        # File Selection Button
-        self.select_button = tk.Button(self.main_frame, text="Seleccionar archivo", command=self.select_file)
-        self.select_button.pack()
+    def create_widgets(self):
+        self.label = tk.Label(self.root, text="Selecciona un archivo de video", bg=self.bg_color, fg=self.fg_color)
+        self.label.pack(pady=20)
 
-        # Convert Button
-        self.convert_button = tk.Button(self.main_frame, text="Convertir", command=self.convert_video)
-        self.convert_button.pack(pady=20)
+        self.select_button = tk.Button(self.root, text="Seleccionar Video", command=self.select_file, bg=self.bg_color, fg=self.fg_color)
+        self.select_button.pack(pady=20)
 
-        # Loading Screen
-        self.loading_label = tk.Label(self.main_frame, text="Cargando...", font=('Helvetica', 16))
-        self.loading_image = ImageTk.PhotoImage(Image.open('loading.gif'))
-        self.loading_label_image = tk.Label(self.main_frame, image=self.loading_image)
+        self.size_button = tk.Button(self.root, text="Especificar Tamaño ArUco", command=self.specify_aruco_size, bg=self.bg_color, fg=self.fg_color)
+        self.size_button.pack(pady=20)
 
-        # Result Image Display
-        self.result_label = tk.Label(self.main_frame)
-        self.result_label.pack(pady=20)
+        self.scale_button = tk.Button(self.root, text="Especificar Escala (mm/píxeles)", command=self.specify_mm_to_pixels_scale, bg=self.bg_color, fg=self.fg_color)
+        self.scale_button.pack(pady=20)
+
+        self.start_button = tk.Button(self.root, text="Iniciar Análisis", command=self.start_analysis, state=tk.DISABLED, bg=self.bg_color, fg=self.fg_color)
+        self.start_button.pack(pady=20)
+
+        self.image_label = tk.Label(self.root, bg=self.bg_color)
+        self.image_label.pack(pady=20)
+
+    def specify_aruco_size(self):
+        size = simpledialog.askfloat("Tamaño ArUco", "Especifica el tamaño real del marcador ArUco en milímetros:", minvalue=0.1)
+        if size:
+            self.aruco_size_mm = size
+            messagebox.showinfo("Tamaño ArUco", f"Tamaño especificado: {self.aruco_size_mm} mm")
+            self.check_ready_to_analyze()
+
+    def specify_mm_to_pixels_scale(self):
+        scale = simpledialog.askfloat("Escala mm/píxeles", "Especifica la escala de milímetros a píxeles:", minvalue=0.01)
+        if scale:
+            self.mm_to_pixels_scale = scale
+            messagebox.showinfo("Escala mm/píxeles", f"Escala especificada: {self.mm_to_pixels_scale} mm/píxeles")
+            self.check_ready_to_analyze()
+
+    def check_ready_to_analyze(self):
+        if self.aruco_size_mm and self.mm_to_pixels_scale and self.video_path:
+            self.start_button.config(state=tk.NORMAL)
 
     def select_file(self):
-        self.video_file = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4")])
-        if self.video_file:
-            self.drag_drop_label.config(text=f"Archivo seleccionado: {self.video_file}")
+        self.video_path = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4")])
+        if self.video_path:
+            messagebox.showinfo("Archivo Seleccionado", f"Archivo: {self.video_path}")
+            self.check_ready_to_analyze()
 
-    def convert_video(self):
-        if self.video_file:
-            # Simulate loading
-            self.loading_label.pack(pady=20)
-            self.loading_label_image.pack(pady=20)
-            self.root.update()
+    def start_analysis(self):
+        if not self.aruco_size_mm:
+            messagebox.showwarning("Falta Tamaño ArUco", "Por favor, especifica el tamaño real del ArUco antes de iniciar el análisis.")
+            return
 
-            # Replace this with actual video to image conversion logic
-            # For demonstration, let's assume we load a sample image
-            self.result_image = Image.open('sample_image.jpg')
-            self.result_image = ImageTk.PhotoImage(self.result_image)
-            self.result_label.config(image=self.result_image)
-            self.result_label.image = self.result_image
+        if not self.mm_to_pixels_scale:
+            messagebox.showwarning("Falta Escala", "Por favor, especifica la escala de milímetros a píxeles antes de iniciar el análisis.")
+            return
 
-            # Remove loading screen after conversion (simulated delay)
-            self.loading_label.pack_forget()
-            self.loading_label_image.pack_forget()
+        self.show_loading_screen()
+        self.root.update()  # Actualizar la interfaz para mostrar la pantalla de carga
 
-if _name_ == "_main_":
+        try:
+            self.result_image_path = self.process_video(self.video_path)
+            if self.result_image_path and os.path.exists(self.result_image_path):
+                self.show_result_image()
+                messagebox.showinfo("Éxito", f"Análisis completado. Imagen guardada en: {self.result_image_path}")
+            else:
+                messagebox.showerror("Error", "No se pudo generar la imagen resultante.")
+        except Exception as e:
+            messagebox.showerror("Error durante el análisis", str(e))
+        finally:
+            self.hide_loading_screen()
+
+    def process_video(self, video_path):
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError("Error al abrir el video")
+
+        ret, frame = cap.read()
+        cap.release()
+
+        if ret:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            result_image_path = "result_image.jpg"
+            cv2.imwrite(result_image_path, gray)  # Guardar el frame en escala de grises directamente con OpenCV
+            return result_image_path
+        else:
+            raise RuntimeError("No se pudo leer el video")
+
+    def show_loading_screen(self):
+        self.loading_window = Toplevel(self.root)
+        self.loading_window.title("Cargando")
+        self.loading_window.geometry("200x100")
+        self.loading_label = tk.Label(self.loading_window, text="Procesando, por favor espere...", bg=self.bg_color, fg=self.fg_color)
+        self.loading_label.pack(pady=20)
+        self.loading_window.configure(bg=self.bg_color)
+        self.loading_window.transient(self.root)
+        self.loading_window.grab_set()
+
+    def hide_loading_screen(self):
+        if hasattr(self, 'loading_window'):
+            self.loading_window.destroy()
+
+    def show_result_image(self):
+        image = Image.open(self.result_image_path)
+        image.thumbnail((400, 400))  # Ajustar el tamaño de la imagen a 400x400 píxeles
+        photo = ImageTk.PhotoImage(image)
+
+        self.image_label.config(image=photo)
+        self.image_label.image = photo  # Mantener una referencia a la imagen
+
+if __name__ == "__main__":
     root = tk.Tk()
-    app = Programa de Ricardo(root)
+    app = VideoAnalyzerApp(root)
     root.mainloop()
