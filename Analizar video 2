@@ -35,9 +35,7 @@ def detect_aruco_positions(frame):
 
     return aruco_positions
 
-
 reference_positions = detect_aruco_positions(reference_frame)
-
 
 movements = []
 frame_idx = 0
@@ -57,15 +55,10 @@ while True:
             frame_data[aruco_id] = diff_mm
         else:
             frame_data[aruco_id] = None
-
     movements.append(frame_data)
     frame_idx += 1
-
 cap.release()
-
-
 output_path = 'movimientos.txt'
-
 with open(output_path, 'w', newline='') as csvfile:
     fieldnames = ['frame'] + list(reference_positions.keys())
     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -73,7 +66,6 @@ with open(output_path, 'w', newline='') as csvfile:
     writer.writeheader()
     for data in movements:
         writer.writerow(data)
-
 
 data = pd.DataFrame(movements)
 fps = 75000  
