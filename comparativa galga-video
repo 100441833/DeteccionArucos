@@ -71,8 +71,8 @@ data_video = pd.DataFrame(movements)
 data_video['Time_s'] = data_video['frame'] / fps
 
 # Selección de los últimos 0.003 segundos del video
-start_time_video = data_video['Time_s'].max() - 0.003
-data_video_sync = data_video[data_video['Time_s'] >= start_time_video]
+start_time_video = 0.003  # Ahora iniciamos desde 0.003s
+data_video_sync = data_video[(data_video['Time_s'] >= start_time_video) & (data_video['Time_s'] <= start_time_video + 0.003)]
 
 # --- Procesamiento de los Datos de las Galgas ---
 file_path = 'Prueba2y5V_0000.txt'
@@ -87,34 +87,29 @@ try:
     data_galgas['Incidente_desplazamiento_mm'] = cumtrapz(data_galgas['Incidente_um_m'], data_galgas['Time_s'], initial=0) / 1000
     data_galgas['Transmitida_desplazamiento_mm'] = cumtrapz(data_galgas['Transmitida_um_m'], data_galgas['Time_s'], initial=0) / 1000
 
-    # Selección del intervalo de 0.003 segundos desde el segundo 0.0120 en los datos de las galgas
-    data_galgas_sync = data_galgas[(data_galgas['Time_s'] >= 0.0120) & (data_galgas['Time_s'] <= 0.0150)].copy()
+    # Selección del intervalo desde 0.0117s hasta 0.0125s en los datos de las galgas
+    data_galgas_sync = data_galgas[(data_galgas['Time_s'] >= 0.0117) & (data_galgas['Time_s'] <= 0.0125)].copy()
 
     # --- Sincronización y Ajuste de Desplazamientos ---
-    # Escalar los valores de desplazamiento de las galgas para que sean comparables con los del video
-    # Aquí vamos a ajustar ambos ejes (tiempo y desplazamiento)
-    
-    # Ajustar los datos de desplazamiento para que empiecen desde cero
-    min_desplazamiento_galgas = data_galgas_sync['Incidente_desplazamiento_mm'].min()
-    data_galgas_sync['Incidente_desplazamiento_mm'] -= min_desplazamiento_galgas
-    data_galgas_sync['Transmitida_desplazamiento_mm'] -= min_desplazamiento_galgas
+    # Ajustar los tiempos de las galgas para que coincidan con los del video
+    # Queremos que 0.0119s en las galgas coincida con 0.003s en el video
+    data_galgas_sync['Time_s_scaled'] = (data_galgas_sync['Time_s'] - 0.0119) * 10 + 0.003
 
-    # Ajustar el tiempo para que coincida con la duración del video (0.003 s)
-    time_video_duration = 0.003
-    time_galgas_duration = data_galgas_sync['Time_s'].max() - data_galgas_sync['Time_s'].min()
-    time_scaling_factor = time_video_duration / time_galgas_duration
-    data_galgas_sync['Time_s_scaled'] = (data_galgas_sync['Time_s'] - data_galgas_sync['Time_s'].min()) * time_scaling_factor
-
-    # Escalar el desplazamiento para que sea comparable con el del video
+    # Escalar los valores de desplazamiento para que sean comparables con los del video
     displacement_video_range = data_video_sync.iloc[:, 1:].max().max() - data_video_sync.iloc[:, 1:].min().min()
     displacement_galgas_range = data_galgas_sync['Incidente_desplazamiento_mm'].max() - data_galgas_sync['Incidente_desplazamiento_mm'].min()
     displacement_scaling_factor = displacement_video_range / displacement_galgas_range
     data_galgas_sync['Incidente_desplazamiento_mm_scaled'] = data_galgas_sync['Incidente_desplazamiento_mm'] * displacement_scaling_factor
     data_galgas_sync['Transmitida_desplazamiento_mm_scaled'] = data_galgas_sync['Transmitida_desplazamiento_mm'] * displacement_scaling_factor
 
-    # --- Gráfico 1: Desplazamiento de las Galgas (Original) ---
+    # Inversión de la señal si es necesario (por ejemplo, si uno es positivo y otro negativo)
+    # Aquí asumiré que la señal de las galgas necesita ser invertida
+    data_galgas_sync['Incidente_desplazamiento_mm_scaled'] *= -1
+    data_galgas_sync['Transmitida_desplazamiento_mm_scaled'] *= -1
+
+    # --- Gráfico 1: Desplazamiento de las Galgas (Original, con Zoom) ---
     plt.figure(figsize=(14, 10))
-    
+
     plt.subplot(3, 1, 1)
     plt.plot(data_galgas['Time_s'], data_galgas['Incidente_desplazamiento_mm'], label='Incidente Desplazamiento (Original)')
     plt.plot(data_galgas['Time_s'], data_galgas['Transmitida_desplazamiento_mm'], label='Transmitida Desplazamiento (Original)')
@@ -123,6 +118,7 @@ try:
     plt.legend()
     plt.title('Desplazamiento de las Galgas (Original)')
     plt.grid(True)
+    plt.xlim(0.0110, 0.0150)  # Aplicar zoom en el eje x
 
     # --- Gráfico 2: Desplazamiento del Video (Original) ---
     plt.subplot(3, 1, 2)
